@@ -1,0 +1,188 @@
+version: "3.9"
+
+services:
+  proxy:
+    image: traefik:v3.0
+    ports: ["8443:443", "8080:80"]
+    volumes:
+      - ./traefik:/etc/traefik:ro
+      - ./certs:/certs:ro
+    networks: [keso]
+
+  web:
+    build: ../services/web
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+      - KEYCLOAK_ISSUER=http://localhost:8081/realms/keso
+    ports: ["3000:3000"]
+    depends_on: [api-gateway]
+    networks: [keso]
+
+  api-gateway:
+    build: ../services/api-gateway
+    environment:
+      - DATABASE_URL=postgresql://keso:${POSTGRES_PASSWORD}@postgres:5432/keso
+      - KEYCLOAK_ISSUER=http://keycloak:8080/realms/keso
+      - KEYCLOAK_JWKS_URL=http://keycloak:8080/realms/keso/protocol/openid-connect/certs
+      - OPA_URL=http://opa:8181
+      - ORCHESTRATOR_URL=http://orchestrator:8200
+      - LOG_LEVEL=INFO
+    ports: ["8000:8000"]
+    depends_on: [postgres, keycloak, opa, orchestrator]
+    networks: [keso]
+
+  orchestrator:
+    build: ../services/orchestrator
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_URL=http://ollama:11434
+      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b-instruct}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - MCP_REGISTRY=/app/shared/schemas/mcp-registry.yaml
+      - LOG_LEVEL=INFO
+    volumes:
+      - ../shared:/app/shared:ro
+    ports: ["8200:8200"]
+    depends_on:
+      - qdrant
+      - ollama
+      - oracledb-mcp-server
+      - mcp-filesystem
+      - mcp-sharepoint
+      - mcp-fetch
+      - mcp-sqlite
+    networks: [keso]
+
+  ingestion:
+    build: ../services/ingestion
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_URL=http://ollama:11434
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - KESO_DOCS_ROOT=/data
+    volumes:
+      - ${KESO_DOCS_ROOT:-../data/sample-docs}:/data:ro
+      - ../shared:/app/shared:ro
+    depends_on: [qdrant, ollama]
+    networks: [keso]
+
+  oracledb-mcp-server:
+    build: ../services/mcp-servers/oracledb-mcp-server
+    environment:
+      - ORACLE_DSN=${ORACLE_DSN}
+      - ORACLE_USER=${ORACLE_USER}
+      - ORACLE_PASSWORD=${ORACLE_PASSWORD}
+      - ORACLE_WALLET_LOCATION=${ORACLE_WALLET_LOCATION:-}
+    ports: ["8101:8100"]
+    networks: [keso]
+
+  mcp-filesystem:
+    build: ../services/mcp-servers/mcp-filesystem
+    environment:
+      - DOCS_ROOT=/data
+    volumes:
+      - ${KESO_DOCS_ROOT:-../data/sample-docs}:/data:ro
+    ports: ["8102:8100"]
+    networks: [keso]
+
+  mcp-sharepoint:
+    build: ../services/mcp-servers/mcp-sharepoint
+    environment:
+      - SHAREPOINT_TENANT_ID=${SHAREPOINT_TENANT_ID}
+      - SHAREPOINT_CLIENT_ID=${SHAREPOINT_CLIENT_ID}
+      - SHAREPOINT_CLIENT_SECRET=${SHAREPOINT_CLIENT_SECRET}
+      - SHAREPOINT_SITE_ID=${SHAREPOINT_SITE_ID}
+    ports: ["8103:8100"]
+    networks: [keso]
+
+  mcp-fetch:
+    build: ../services/mcp-servers/mcp-fetch
+    environment:
+      - ALLOWED_HOSTS=${GIS_ALLOWED_HOSTS:-gis.keso.internal}
+    ports: ["8104:8100"]
+    networks: [keso]
+
+  mcp-sqlite:
+    build: ../services/mcp-servers/mcp-sqlite
+    volumes:
+      - ../data/sqlite:/data:ro
+    ports: ["8105:8100"]
+    networks: [keso]
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_DB=keso
+      - POSTGRES_USER=keso
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports: ["5432:5432"]
+    networks: [keso]
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports: ["6333:6333"]
+    networks: [keso]
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    ports: ["11434:11434"]
+    networks: [keso]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    ports: ["8081:8080"]
+    networks: [keso]
+
+  opa:
+    image: openpolicyagent/opa:0.63.0
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    volumes:
+      - ./opa/policies:/policies:ro
+    ports: ["8181:8181"]
+    networks: [keso]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+    ports: ["9090:9090"]
+    networks: [keso]
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus, loki]
+    networks: [keso]
+
+  loki:
+    image: grafana/loki:3.0.0
+    volumes:
+      - ./loki:/etc/loki:ro
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    ports: ["3100:3100"]
+    networks: [keso]
+
+networks:
+  keso:
+    driver: bridge
+
+volumes:
+  pgdata:
+  qdrant_data:
+  ollama_data:

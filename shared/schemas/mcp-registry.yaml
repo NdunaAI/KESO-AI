@@ -1,0 +1,46 @@
+# Registry of MCP servers the Orchestrator connects to.
+# See docs/05-mcp-connectors.md for the tool contract each server exposes.
+#
+# `source_system` is used to label citations (docs/04-data-model.md #4.2) and
+# is looked up explicitly rather than derived from the server name, since not
+# every connector follows the "mcp-<name>" naming convention (e.g.
+# oracledb-mcp-server).
+servers:
+  - name: oracledb-mcp-server
+    transport: http
+    url: http://oracledb-mcp-server:8100
+    source_system: oracle
+    requires_roles: null # open to all authenticated users; financial tools are gated per-tool inside the server
+
+  - name: mcp-filesystem
+    transport: http
+    url: http://mcp-filesystem:8100
+    source_system: filesystem
+    requires_roles: null
+
+  - name: mcp-sharepoint
+    transport: http
+    url: http://mcp-sharepoint:8100
+    source_system: sharepoint
+    requires_roles: null
+
+  - name: mcp-fetch
+    transport: http
+    url: http://mcp-fetch:8100
+    source_system: gis
+    requires_roles: null
+
+  - name: mcp-sqlite
+    transport: http
+    url: http://mcp-sqlite:8100
+    source_system: sqlite
+    requires_roles: null
+
+# Stage-2 intent -> tool routing table (docs/06-rag-pipeline.md #6.2)
+routing:
+  status_lookup: ["oracledb-mcp-server.get_milestone_status", "oracledb-mcp-server.get_project"]
+  financial_query: ["oracledb-mcp-server.get_claims", "oracledb-mcp-server.get_payments", "oracledb-mcp-server.get_outstanding_financial_reports"]
+  document_search: ["mcp-sharepoint.search_documents", "mcp-filesystem.list_documents"]
+  policy_query: ["mcp-sharepoint.search_documents"]
+  summary: ["oracledb-mcp-server.get_milestone_status", "mcp-sharepoint.search_documents"]
+  comparison: ["oracledb-mcp-server.list_projects", "mcp-sharepoint.search_documents"]

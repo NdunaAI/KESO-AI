@@ -1,0 +1,19 @@
+# Minimal static config for local/PoC TLS termination.
+# Place a dev certificate + key under infra/certs/ and reference them here,
+# or run without the proxy service during local development (hit
+# api-gateway:8000 / web:3000 directly, as docker-compose.yml already
+# publishes those ports).
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+api:
+  dashboard: false

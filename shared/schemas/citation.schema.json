@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Citation",
+  "description": "Shape of a citation emitted over SSE and persisted in the citations table. See docs/03-api-specification.md #3.2 and docs/04-data-model.md #4.1.",
+  "type": "object",
+  "required": ["id", "source_type", "source_system", "title"],
+  "properties": {
+    "id": { "type": "string", "description": "Local marker id used in the answer text, e.g. 'S1'" },
+    "source_type": { "type": "string", "enum": ["document", "record"] },
+    "source_system": { "type": "string", "enum": ["sharepoint", "oracle", "csv", "gis", "filesystem", "sqlite"] },
+    "source_uri": { "type": "string" },
+    "title": { "type": "string" },
+    "snippet": { "type": "string" },
+    "page_number": { "type": "integer" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

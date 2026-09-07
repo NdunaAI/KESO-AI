@@ -1,0 +1,21 @@
+# Mirrors docs/10-observability-audit.md #10.3
+groups:
+  - name: keso-ai
+    rules:
+      - alert: HighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "API Gateway 5xx rate above 5% for 5 minutes" }
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{route="/chat"}[10m])) by (le)) > 8
+        for: 10m
+        labels: { severity: warn }
+        annotations: { summary: "/chat p95 latency above 8s for 10 minutes" }
+
+      - alert: GuardrailSpike
+        expr: rate(guardrail_triggered_total[1h]) > 3 * rate(guardrail_triggered_total[7d])
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "Guardrail trigger rate is 3x the 7-day baseline" }

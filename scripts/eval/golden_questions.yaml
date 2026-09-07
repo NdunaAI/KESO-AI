@@ -1,0 +1,40 @@
+# Golden-question regression set. See docs/08-ai-safety-guardrails.md #8.7
+# and docs/11-dev-setup.md #11.4. Run whenever the prompt, model, or
+# ingestion pipeline changes; track pass rate as a trend, not a hard gate,
+# since LLM output is non-deterministic.
+questions:
+  - id: milestone-status
+    question: "What is the status of Milestone 3 for Settlement A?"
+    expect_intent: status_lookup
+    expect_any_source_system: [oracle, filesystem, sharepoint]
+    expect_refusal: false
+
+  - id: payment-evidence
+    question: "Show documents supporting the payment for Project X."
+    expect_intent: financial_query
+    expect_any_source_system: [oracle, sharepoint]
+    expect_refusal: false
+
+  - id: outstanding-financial-reports
+    question: "Which projects have outstanding financial reports?"
+    expect_intent: financial_query
+    expect_any_source_system: [oracle]
+    expect_refusal: false
+
+  - id: q2-summary
+    question: "Summarise Q2 progress for Settlement B."
+    expect_intent: summary
+    expect_any_source_system: [oracle, sharepoint, filesystem]
+    expect_refusal: false
+
+  - id: stakeholder-policy
+    question: "What policies apply to stakeholder engagement?"
+    expect_intent: policy_query
+    expect_any_source_system: [sharepoint, filesystem]
+    expect_refusal: false
+
+  - id: out-of-scope
+    question: "What's the weather like today?"
+    expect_intent: null
+    expect_any_source_system: []
+    expect_refusal: true
