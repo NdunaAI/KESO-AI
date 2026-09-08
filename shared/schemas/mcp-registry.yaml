@@ -41,6 +41,11 @@ routing:
   status_lookup: ["oracledb-mcp-server.get_milestone_status", "oracledb-mcp-server.get_project"]
   financial_query: ["oracledb-mcp-server.get_claims", "oracledb-mcp-server.get_payments", "oracledb-mcp-server.get_outstanding_financial_reports"]
   document_search: ["mcp-sharepoint.search_documents", "mcp-filesystem.list_documents"]
-  policy_query: ["mcp-sharepoint.search_documents"]
+  # mcp-sqlite.query_table serves the community consultation register (a
+  # "lightweight register not yet in the main operational DB" per
+  # docs/05-mcp-connectors.md #5.5) -- the policy itself is retrieved via
+  # semantic search (Stage 3) / mcp-sharepoint, while this tool answers
+  # "were the required sessions actually held" against real attendance rows.
+  policy_query: ["mcp-sharepoint.search_documents", "mcp-sqlite.query_table"]
   summary: ["oracledb-mcp-server.get_milestone_status", "mcp-sharepoint.search_documents"]
   comparison: ["oracledb-mcp-server.list_projects", "mcp-sharepoint.search_documents"]

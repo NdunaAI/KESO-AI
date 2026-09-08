@@ -8,7 +8,7 @@ KESO AI is a layered RAG (Retrieval-Augmented Generation) system. A user's natur
 flowchart LR
     U[Users] --> W["1. Web Interface\nNext.js / React / Tailwind"]
     W --> G["2. API Gateway\nFastAPI (REST/WS/SSE)"]
-    G --> A["3. Auth & Access\nKeycloak + OPA"]
+    G --> A["3. Auth & Access\nSelf-issued JWT + OPA"]
     A --> B["4. AI Orchestration Brain\nMCP + RAG pipeline"]
     B <--> K["5. Knowledge Base\nUnstructured.io / LlamaIndex / Qdrant / pgvector"]
     B <--> M["6. MCP Connector Layer"]
@@ -24,13 +24,13 @@ flowchart LR
 - Stack: Next.js (App Router) + React + Tailwind CSS.
 - Responsibilities: chat UI, Q&A history, search, rendering of source citations as clickable references, opening supporting records/documents in a viewer/modal, capturing thumbs-up/down + free-text feedback.
 - Consumes: API Gateway REST endpoints for session/history management, SSE (or WebSocket) stream for token-by-token answer rendering.
-- Auth: redirects to Keycloak for SSO (OIDC Authorization Code + PKCE flow); stores only the session cookie/short-lived access token, never long-lived credentials.
+- Auth: presents its own login form, which calls `POST /api/v1/auth/login` on the API Gateway (email + password); stores only the short-lived access token and the opaque refresh token, never the password itself.
 
 ### Layer 2 — API Gateway
 - Stack: FastAPI (Python 3.11+), served by Uvicorn/Gunicorn.
 - Responsibilities:
   - Route and validate incoming requests (Pydantic models).
-  - Terminate/validate JWTs issued by Keycloak (signature, expiry, audience).
+  - Validate its own self-issued JWTs (signature, expiry, issuer) — see [07-security-auth.md](07-security-auth.md).
   - Manage conversation session state (conversation id, message history reference, active filters e.g. project/settlement scope).
   - Stream responses to the client via Server-Sent Events (primary) or WebSocket (for bidirectional cases, e.g. mid-stream cancellation).
   - Rate limiting per user/role (token bucket, e.g. via `slowapi` or a Redis-backed limiter).
@@ -38,10 +38,10 @@ flowchart LR
 - Does **not** talk to the LLM or vector store directly — it delegates to the Orchestration Brain (Layer 4) as an internal service call.
 
 ### Layer 3 — Auth & Access
-- Stack: Keycloak (SSO/IdP) + Open Policy Agent (OPA) (fine-grained policy decisions).
+- Stack: the API Gateway's own JWT auth module (no external IdP — see [07-security-auth.md](07-security-auth.md) #7.1) + Open Policy Agent (OPA) for fine-grained policy decisions.
 - Responsibilities:
-  - SAML / OIDC login against KESO's identity source (or Keycloak-managed users for the PoC).
-  - Issue JWT/OAuth2 access tokens carrying role and attribute claims (see [07-security-auth.md](07-security-auth.md)).
+  - Email/password login against KESO AI's own `users` table (bcrypt-hashed credentials); accounts are operator-provisioned for the PoC.
+  - Issue self-signed JWT access tokens (HS256) plus revocable opaque refresh tokens carrying role and scope claims (see [07-security-auth.md](07-security-auth.md)).
   - Role-based access control (RBAC) at the API/tool level (e.g., only Financial Officers may call payment-related MCP tools).
   - Row-level permission decisions (e.g., a PM can only see projects/settlements they are assigned to) delegated to OPA as a policy query from the API Gateway and from the Orchestration Brain before retrieval.
 
@@ -70,7 +70,7 @@ sequenceDiagram
     participant U as User (Browser)
     participant W as Web Interface
     participant G as API Gateway
-    participant Auth as Keycloak/OPA
+    participant Auth as API Gateway JWT/OPA
     participant O as Orchestration Brain
     participant KB as Knowledge Base (Qdrant)
     participant MCP as MCP Connector Layer

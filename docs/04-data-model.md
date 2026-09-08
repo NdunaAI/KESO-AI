@@ -20,8 +20,8 @@ erDiagram
 
     USERS {
         uuid id PK
-        text keycloak_subject UK
-        text email
+        text email UK
+        text password_hash
         text display_name
         text[] roles
         timestamptz created_at
@@ -33,6 +33,15 @@ erDiagram
         text scope_type "project|settlement"
         text scope_value
     }
+    REFRESH_TOKENS {
+        uuid id PK
+        uuid user_id FK
+        text token_hash UK
+        timestamptz expires_at
+        timestamptz revoked_at
+        timestamptz created_at
+    }
+    USERS ||--o{ REFRESH_TOKENS : issues
     CONVERSATIONS {
         uuid id PK
         uuid user_id FK
@@ -83,8 +92,9 @@ erDiagram
 
 ### Table notes
 
-- `users.roles` mirrors Keycloak realm roles at time of last login (cache only — Keycloak/JWT remains the source of truth per-request; this cache is for admin reporting/UI display).
-- `user_scope` mirrors row-level assignments (which projects/settlements a user may see), synced from the operational DB or from Keycloak group attributes on login; used as a fast local check before delegating final authorization to OPA.
+- `users` is the source of truth for identity (no external IdP — see [07-security-auth.md](07-security-auth.md) #7.1); `password_hash` is bcrypt, never plaintext or reversibly encrypted. `roles` is read directly onto every access token issued for that user.
+- `user_scope` holds row-level assignments (which projects/settlements a user may see), maintained by an operator or synced from the operational DB's assignment table; read into the `keso.scope` claim at token-issue time (login/refresh), then used as a fast local check before delegating final authorization to OPA.
+- `refresh_tokens` stores only a SHA-256 hash of each issued refresh token (never the token itself), so a database read alone can't be used to mint a working session. `revoked_at` is set on logout or automatically on rotation (`POST /api/v1/auth/refresh`), which also revokes the token it replaces.
 - `messages.tool_calls` stores the MCP tool invocations made while answering, for auditability and debugging (tool name, args, duration, success/failure — not the raw returned data if it is sensitive; store a reference instead).
 - `citations` is the durable record of "what did the assistant show as evidence", independent of the live source (which may change later) — supports the audit requirement "log cited sources."
 - `audit_log.event_type` values: `query_submitted`, `answer_returned`, `answer_refused`, `citation_opened`, `feedback_submitted`, `permission_denied`, `guardrail_triggered`.
@@ -95,6 +105,7 @@ erDiagram
 - `messages(conversation_id, created_at)`.
 - `citations(message_id)`.
 - `audit_log(user_id, created_at)` and `audit_log(event_type, created_at)` for monitoring queries.
+- `refresh_tokens(token_hash)` unique, for the `O(1)` lookup on every `/auth/refresh` call.
 - Retention: `audit_log` and `citations` are append-only (no hard deletes) for compliance; `conversations`/`messages` support soft delete (`deleted` flag) at user request.
 
 ## 4.2 Vector store schema (Qdrant collection: `keso_documents`)
@@ -125,7 +136,7 @@ If pgvector is used instead of Qdrant (lower-ops alternative), the same fields b
 
 ## 4.3 Permission propagation into retrieval
 
-1. On login, the API Gateway resolves the user's `roles` and `user_scope` (projects/settlements) from Keycloak claims (and/or the `user_scope` cache table).
+1. On login (or refresh), the API Gateway reads the user's `roles` (from `users`) and scope (projects/settlements, from `user_scope`) and bakes them into the issued access token's `keso.scope` claim (see [07-security-auth.md](07-security-auth.md) #7.2).
 2. The Orchestration Brain converts this into a Qdrant filter, e.g.:
    ```json
    {

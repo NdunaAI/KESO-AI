@@ -14,7 +14,7 @@ Source design reference: `KESO_AI_PoC_Architecture.pdf` (2-page architecture bri
 | 4 | [04-data-model.md](04-data-model.md) | PostgreSQL schema, Qdrant collection schema, ERDs |
 | 5 | [05-mcp-connectors.md](05-mcp-connectors.md) | MCP Connector Layer: each server's tools, schemas, config |
 | 6 | [06-rag-pipeline.md](06-rag-pipeline.md) | Ingestion, chunking, embeddings, retrieval, orchestration brain |
-| 7 | [07-security-auth.md](07-security-auth.md) | Keycloak, OPA, RBAC/row-level access, JWT claims |
+| 7 | [07-security-auth.md](07-security-auth.md) | Self-issued JWT auth, OPA, RBAC/row-level access, JWT claims |
 | 8 | [08-ai-safety-guardrails.md](08-ai-safety-guardrails.md) | PII detection, prompt-injection defence, content filtering, grounding |
 | 9 | [09-deployment.md](09-deployment.md) | Docker Compose topology, environment variables, sizing, runbook |
 | 10 | [10-observability-audit.md](10-observability-audit.md) | Metrics, logs, dashboards, alerts, audit trail schema |

@@ -47,7 +47,10 @@ class QueryUnderstanding(BaseModel):
 class ToolResult(BaseModel):
     tool: str
     citation_id: str
-    data: dict
+    # A tool's result shape depends on what it wraps: single-record lookups
+    # (e.g. oracledb-mcp-server.get_milestone_status) return a dict;
+    # row-set queries (e.g. mcp-sqlite.query_table) return a list of rows.
+    data: dict | list
     source_system: str
     source_uri: str | None = None
 

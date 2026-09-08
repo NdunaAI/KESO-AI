@@ -53,7 +53,7 @@ Wraps SharePoint/DMS holding UISP reports, evidence, and policies.
 
 Implementation notes:
 - Authenticates to SharePoint via an app-only Azure AD/Entra ID registration (client credentials), scoped to read-only Graph API permissions on the specific document libraries KESO approves.
-- Respects SharePoint's own item-level permissions where feasible (pass-through of the calling user's Graph delegated permissions is the stronger design if Entra ID SSO is federated with Keycloak; the app-only fallback relies on the `access_tags` metadata set at ingestion time plus OPA policy as the authorization boundary).
+- Respects SharePoint's own item-level permissions where feasible (pass-through of the calling user's Graph delegated permissions would be the stronger design, but that requires a real Entra ID SSO session, which the PoC's self-issued JWT auth doesn't provide — see [07-security-auth.md](07-security-auth.md) #7.1; the app-only fallback instead relies on the `access_tags` metadata set at ingestion time plus OPA policy as the authorization boundary).
 
 ## 5.4 `mcp-fetch` — web and REST APIs
 

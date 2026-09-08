@@ -2,7 +2,7 @@
 
 Base URL (PoC): `https://keso-ai.local/api/v1`
 
-All endpoints require a valid Keycloak-issued Bearer JWT in the `Authorization` header unless noted. Content type is `application/json` except the streaming endpoint (`text/event-stream`).
+All endpoints require a valid, self-issued Bearer JWT (see [07-security-auth.md](07-security-auth.md)) in the `Authorization` header unless noted — `/auth/login` and `/auth/refresh` are the exceptions, since they're how a caller obtains that token in the first place. Content type is `application/json` except the streaming endpoint (`text/event-stream`).
 
 ## 3.1 Conventions
 
@@ -21,6 +21,35 @@ All endpoints require a valid Keycloak-issued Bearer JWT in the `Authorization` 
 - All timestamps are ISO-8601 UTC.
 
 ## 3.2 Endpoints
+
+### `POST /auth/login` — obtain a token pair (no auth required)
+
+Request: `{ "email": "user@keso.org", "password": "..." }`
+
+Response: `200 OK`
+```json
+{
+  "access_token": "eyJ...",
+  "refresh_token": "opaque-random-string",
+  "token_type": "bearer",
+  "expires_in": 900
+}
+```
+`401` on unknown email or wrong password (same error either way — see [07-security-auth.md](07-security-auth.md) #7.1).
+
+### `POST /auth/refresh` — rotate a refresh token for a new pair (no auth header required, refresh token in body)
+
+Request: `{ "refresh_token": "..." }` → same `200` response shape as `/auth/login`. The presented refresh token is revoked as part of this call (rotate-on-use); reusing it afterward returns `401`.
+
+### `POST /auth/logout` — revoke a refresh token
+
+Request: `{ "refresh_token": "..." }` → `204 No Content`.
+
+### `GET /auth/me` — the caller's own profile, from their access token
+
+```json
+{ "id": "...", "email": "user@keso.org", "display_name": "...", "roles": ["project_manager"], "scope": { "projects": [...], "settlements": [...] } }
+```
 
 ### `POST /chat` — ask a question (streaming)
 
@@ -113,7 +142,7 @@ Query params: `q`, `filters.*`, `limit`, `cursor`. Returns ranked chunks/records
 
 ### `GET /health` and `GET /ready` — liveness/readiness probes (no auth), used by Docker/orchestrator healthchecks.
 
-### `GET /health/dependencies` (internal/admin only) — checks connectivity to Postgres, Qdrant, Ollama, each MCP server, Keycloak, OPA. Used by the monitoring stack.
+### `GET /health/dependencies` (internal/admin only) — checks connectivity to Postgres, Qdrant, Ollama, each MCP server, OPA. Used by the monitoring stack.
 
 ## 3.3 WebSocket alternative
 
@@ -121,10 +150,10 @@ Query params: `q`, `filters.*`, `limit`, `cursor`. Returns ranked chunks/records
 
 ## 3.4 Auth flow (frontend perspective)
 
-1. Unauthenticated user hits the Next.js app → redirected to Keycloak login (OIDC Authorization Code + PKCE).
-2. Keycloak redirects back with an authorization code; the Next.js server (or a small BFF route) exchanges it for tokens.
-3. Access token (short-lived, e.g. 5 min) is attached as `Authorization: Bearer` on all API Gateway calls; refresh token is used silently to renew it.
-4. API Gateway validates the JWT signature against Keycloak's JWKS endpoint, checks `exp`, `aud`, and extracts role/scope claims (see [07-security-auth.md](07-security-auth.md)) on every request — it does not trust client-side role display.
+1. Unauthenticated user hits the Next.js app → sees a login form.
+2. The form submits email + password to `POST /api/v1/auth/login`; on success the response's access and refresh tokens are stored client-side (never the password).
+3. Access token (short-lived, 15 min default) is attached as `Authorization: Bearer` on all API Gateway calls; on a `401`, the client calls `POST /api/v1/auth/refresh` with the stored refresh token to silently obtain a new pair, then retries the original request once.
+4. API Gateway validates the JWT signature locally (`JWT_SECRET`, HS256), checks `exp` and `iss`, and extracts role/scope claims (see [07-security-auth.md](07-security-auth.md)) on every request — it does not trust client-side role display.
 
 ## 3.5 Rate limiting
 

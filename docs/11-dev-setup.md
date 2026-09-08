@@ -11,8 +11,8 @@
 ```bash
 git clone https://github.com/NdunaAI/KESO-AI.git
 cd KESO-AI
-cp infra/.env.example .env   # fill in local secrets/paths
-docker compose -f infra/docker-compose.yml up -d postgres qdrant ollama keycloak opa
+cp infra/.env.example .env   # fill in local secrets/paths, including JWT_SECRET
+docker compose -f infra/docker-compose.yml up -d postgres qdrant ollama opa
 docker compose exec ollama ollama pull llama3.1:8b-instruct
 docker compose exec ollama ollama pull nomic-embed-text
 
@@ -30,6 +30,16 @@ uvicorn app.main:app --reload --port 8200
 ```
 
 Seed sample data: `python scripts/seed_sample_data.py` loads a small fixture set (a handful of fake projects/milestones/documents) so the pipeline can be exercised end-to-end without real KESO data on a developer machine.
+
+There is no external identity provider (see [07-security-auth.md](07-security-auth.md) #7.1) — the API Gateway creates its own `users`/`user_scope`/`refresh_tokens` tables on first startup, but they start empty. Provision a local login with:
+
+```bash
+cd services/api-gateway
+python -m app.manage create-user --email pm@keso.org --password 'dev-only-password' \
+  --display-name "Dev PM" --role project_manager --settlement A --settlement C
+```
+
+then `POST /api/v1/auth/login` with that email/password to get an access/refresh token pair to use against the API.
 
 ## 11.3 Coding standards
 

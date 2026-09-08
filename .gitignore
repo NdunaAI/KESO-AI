@@ -14,6 +14,11 @@ __pycache__/
 node_modules/
 .next/
 out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Design canvas working files (Claude Design scratch material, not app code)
+.design/
 
 # Data & models (never committed -- these hold KESO documents / DB dumps)
 data/

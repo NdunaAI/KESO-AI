@@ -1,27 +1,64 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { streamChat, type Citation } from "@/lib/api";
-
-interface DisplayMessage {
-  role: "user" | "assistant";
-  text: string;
-  citations: Citation[];
-}
+import { useEffect, useRef, useState } from "react";
+import {
+  streamChat,
+  fetchMe,
+  fetchConversations,
+  fetchConversation,
+  type ChatFilters,
+  type ConversationSummary,
+  type UserProfile,
+} from "@/lib/api";
+import { Header } from "@/components/Header";
+import { Sidebar } from "@/components/Sidebar";
+import { FilterBar } from "@/components/FilterBar";
+import { ChatMessage, type DisplayMessage } from "@/components/ChatMessage";
+import { ChatInput } from "@/components/ChatInput";
 
 export default function ChatPage() {
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
+  const [filters, setFilters] = useState<ChatFilters>({});
   const [isStreaming, setIsStreaming] = useState(false);
-  const conversationIdRef = useRef<string | null>(null);
+  const threadEndRef = useRef<HTMLDivElement>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  useEffect(() => {
+    fetchMe().then(setProfile);
+    fetchConversations().then(setConversations);
+  }, []);
+
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function handleSelectConversation(id: string) {
+    setConversationId(id);
+    const history = await fetchConversation(id);
+    setMessages(
+      (history ?? []).map((m) => ({
+        role: m.role,
+        text: m.text,
+        citations: m.citations,
+        createdAt: new Date(m.created_at),
+      }))
+    );
+  }
+
+  function handleNewConversation() {
+    setConversationId(null);
+    setMessages([]);
+  }
+
+  async function handleSubmit() {
     const question = input.trim();
     if (!question || isStreaming) return;
 
-    setMessages((prev) => [...prev, { role: "user", text: question, citations: [] }]);
-    setMessages((prev) => [...prev, { role: "assistant", text: "", citations: [] }]);
+    setMessages((prev) => [...prev, { role: "user", text: question, citations: [], createdAt: new Date() }]);
+    setMessages((prev) => [...prev, { role: "assistant", text: "", citations: [], createdAt: new Date() }]);
     setInput("");
     setIsStreaming(true);
 
@@ -29,15 +66,15 @@ export default function ChatPage() {
       setMessages((prev) => {
         const next = [...prev];
         const lastIndex = next.length - 1;
-        next[lastIndex] = fn(next[lastIndex]);
+        next[lastIndex] = fn(next[lastIndex]!);
         return next;
       });
     };
 
     try {
-      await streamChat(question, conversationIdRef.current, {}, {
+      await streamChat(question, conversationId, filters, {
         onMeta: (meta) => {
-          conversationIdRef.current = meta.conversation_id;
+          setConversationId(meta.conversation_id);
         },
         onToken: (text) => {
           updateLastAssistant((m) => ({ ...m, text: m.text + text }));
@@ -45,7 +82,10 @@ export default function ChatPage() {
         onCitation: (citation) => {
           updateLastAssistant((m) => ({ ...m, citations: [...m.citations, citation] }));
         },
-        onDone: () => setIsStreaming(false),
+        onDone: () => {
+          setIsStreaming(false);
+          fetchConversations().then(setConversations);
+        },
         onError: (err) => {
           updateLastAssistant((m) => ({ ...m, text: m.text || `Error: ${err.message}` }));
           setIsStreaming(false);
@@ -57,49 +97,38 @@ export default function ChatPage() {
   }
 
   return (
-    <main className="mx-auto flex h-screen max-w-3xl flex-col p-4">
-      <h1 className="mb-4 text-xl font-semibold">KESO AI</h1>
+    <div className="flex h-screen flex-col overflow-hidden">
+      <div className="h-[3px] shrink-0 bg-gradient-to-r from-keso-orange via-keso-indigo to-keso-green" />
+      <Header profile={profile} />
 
-      <div className="flex-1 space-y-4 overflow-y-auto">
-        {messages.map((m, i) => (
-          <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
-            <div
-              className={
-                "inline-block max-w-[80%] rounded-lg px-3 py-2 " +
-                (m.role === "user" ? "bg-blue-600 text-white" : "bg-white shadow-sm")
-              }
-            >
-              <p className="whitespace-pre-wrap">{m.text || (isStreaming && i === messages.length - 1 ? "…" : "")}</p>
-              {m.citations.length > 0 && (
-                <ul className="mt-2 space-y-1 border-t border-slate-200 pt-2 text-xs text-slate-500">
-                  {m.citations.map((c) => (
-                    <li key={c.id}>
-                      [{c.id}] {c.title} ({c.source_system})
-                    </li>
-                  ))}
-                </ul>
-              )}
+      <div className="flex min-h-0 flex-1">
+        <Sidebar
+          conversations={conversations}
+          activeConversationId={conversationId}
+          onSelectConversation={handleSelectConversation}
+          onNewConversation={handleNewConversation}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="keso-scroll flex-1 overflow-y-auto px-10 py-8">
+            <div className="flex flex-col gap-6">
+              {messages.map((m, i) => (
+                <ChatMessage key={i} message={m} isStreaming={isStreaming && i === messages.length - 1} />
+              ))}
+              <div ref={threadEndRef} />
             </div>
           </div>
-        ))}
-      </div>
 
-      <form onSubmit={handleSubmit} className="mt-4 flex gap-2">
-        <input
-          className="flex-1 rounded border border-slate-300 px-3 py-2"
-          placeholder="Ask about a project, milestone, or policy…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={isStreaming}
-        />
-        <button
-          type="submit"
-          className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
-          disabled={isStreaming || !input.trim()}
-        >
-          Ask
-        </button>
-      </form>
-    </main>
+          <FilterBar
+            filters={filters}
+            onChange={setFilters}
+            availableProjects={(profile?.scope.projects ?? []).filter((p) => p !== "*")}
+            availableSettlements={(profile?.scope.settlements ?? []).filter((s) => s !== "*")}
+          />
+
+          <ChatInput value={input} onChange={setInput} onSubmit={handleSubmit} disabled={isStreaming} />
+        </div>
+      </div>
+    </div>
   );
 }

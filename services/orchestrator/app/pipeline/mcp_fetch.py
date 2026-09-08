@@ -11,14 +11,30 @@ from app.pipeline.schemas import QueryUnderstanding, Subject, ToolResult
 log = structlog.get_logger()
 
 
+# The one SQLite table this PoC's consultation register exposes (see
+# scripts/seed_sample_data.py::seed_sqlite_register) -- mcp-sqlite addresses
+# tables as "<db_file_stem>.<table_name>" (docs/05-mcp-connectors.md #5.5).
+_SQLITE_CONSULTATION_TABLE = "consultation_register.sessions"
+
+
 def _args_for(server_tool: str, understanding: QueryUnderstanding) -> dict:
-    args: dict = {}
+    entities: dict = {}
     if understanding.entities.settlement:
-        args["settlement_id"] = understanding.entities.settlement
+        entities["settlement_id"] = understanding.entities.settlement
     if understanding.entities.project:
-        args["project_id"] = understanding.entities.project
+        entities["project_id"] = understanding.entities.project
     if understanding.entities.milestone is not None:
-        args["milestone_number"] = understanding.entities.milestone
+        entities["milestone_number"] = understanding.entities.milestone
+
+    if server_tool == "mcp-sqlite.query_table":
+        # query_table's arg shape (table + filters) is unrelated to the
+        # flat entity args every other connector takes here.
+        return {
+            "table": _SQLITE_CONSULTATION_TABLE,
+            "filters": {k: v for k, v in entities.items() if k in ("settlement_id", "project_id")},
+        }
+
+    args = dict(entities)
     if server_tool.startswith("mcp-sharepoint") or server_tool.startswith("mcp-filesystem"):
         args["query"] = understanding.rewritten_query
     return args

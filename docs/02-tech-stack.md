@@ -10,7 +10,7 @@
 | Orchestration | LangChain and/or LlamaIndex + MCP Python SDK | LlamaIndex for ingestion/indexing; LangChain (or hand-rolled) for the 4-stage orchestration graph |
 | API server | FastAPI + Uvicorn (Gunicorn worker manager in prod) | Async throughout; Pydantic v2 models |
 | Frontend | Next.js 14+ (App Router) + React 18 + Tailwind CSS | TypeScript strict mode |
-| Identity | Keycloak + Open Policy Agent (OPA) | Keycloak issues tokens; OPA evaluates Rego policies for row-level/tool-level authorization |
+| Identity | API Gateway's own JWT auth (bcrypt + `python-jose`) + Open Policy Agent (OPA) | No external IdP — the API Gateway issues/validates its own tokens; OPA evaluates Rego policies for row-level/tool-level authorization |
 | Ingestion | Unstructured.io (OSS library) + Python | Handles PDF/DOCX/XLSX/CSV extraction and layout-aware chunking hints |
 | Observability | Prometheus + Grafana + Loki | Metrics, dashboards, log aggregation |
 | Persistence (app data) | PostgreSQL | Conversations, feedback, audit log, user/session cache, and optionally pgvector -- KESO AI's own state, separate from KESO's operational systems |
@@ -23,7 +23,6 @@
 - Node.js 20 LTS
 - PostgreSQL 15+ (with `pgvector` extension available even if Qdrant is primary, for audit/feedback tables)
 - Qdrant 1.9+
-- Keycloak 24+
 - OPA 0.63+
 - Oracle Database 19c+ (KESO's existing operational DB; accessed via `python-oracledb` 2.x in thin mode, so no Oracle Instant Client install is required)
 
@@ -37,7 +36,6 @@ KESO-AI/
 ├── infra/
 │   ├── docker-compose.yml
 │   ├── docker-compose.override.yml.example
-│   ├── keycloak/                # realm export, client configs
 │   ├── opa/                     # Rego policy bundles
 │   ├── prometheus/               # scrape configs, alert rules
 │   ├── grafana/                  # dashboards as JSON
@@ -72,4 +70,4 @@ Each `services/*` directory is an independently deployable container with its ow
 - `unstructured[all-docs]`
 - `presidio-analyzer` / `presidio-anonymizer` (PII detection, see [08-ai-safety-guardrails.md](08-ai-safety-guardrails.md))
 - `opa-python-client` or plain HTTP calls to OPA's REST API
-- Frontend: `next`, `react`, `tailwindcss`, `@microsoft/fetch-event-source` (SSE client), `next-auth` (OIDC) or a thin custom Keycloak adapter
+- Frontend: `next`, `react`, `tailwindcss`, `@microsoft/fetch-event-source` (SSE client); auth is a plain login form calling the API Gateway's `/api/v1/auth/login` — no OIDC client library needed since there is no external IdP

@@ -27,7 +27,6 @@ async def dependencies() -> dict:
         for name, url in {
             "orchestrator": f"{settings.orchestrator_url}/health",
             "opa": f"{settings.opa_url}/health",
-            "keycloak": settings.keycloak_jwks_url,
         }.items():
             try:
                 resp = await client.get(url)

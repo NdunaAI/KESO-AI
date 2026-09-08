@@ -13,7 +13,6 @@ services:
     build: ../services/web
     environment:
       - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
-      - KEYCLOAK_ISSUER=http://localhost:8081/realms/keso
     ports: ["3000:3000"]
     depends_on: [api-gateway]
     networks: [keso]
@@ -21,22 +20,24 @@ services:
   api-gateway:
     build: ../services/api-gateway
     environment:
-      - DATABASE_URL=postgresql://keso:${POSTGRES_PASSWORD}@postgres:5432/keso
-      - KEYCLOAK_ISSUER=http://keycloak:8080/realms/keso
-      - KEYCLOAK_JWKS_URL=http://keycloak:8080/realms/keso/protocol/openid-connect/certs
+      - DATABASE_URL=postgresql+asyncpg://keso:${POSTGRES_PASSWORD}@postgres:5432/keso
+      - JWT_SECRET=${JWT_SECRET}
       - OPA_URL=http://opa:8181
       - ORCHESTRATOR_URL=http://orchestrator:8200
       - LOG_LEVEL=INFO
     ports: ["8000:8000"]
-    depends_on: [postgres, keycloak, opa, orchestrator]
+    depends_on: [postgres, opa, orchestrator]
     networks: [keso]
 
   orchestrator:
     build: ../services/orchestrator
     environment:
       - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_URL=http://ollama:11434
-      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b-instruct}
+      # Defaults to the containerized `ollama` service below; override to an
+      # external Ollama (e.g. a native host install with models already
+      # pulled -- see infra/.env) via OLLAMA_URL in .env.
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
+      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
       - MCP_REGISTRY=/app/shared/schemas/mcp-registry.yaml
       - LOG_LEVEL=INFO
@@ -57,7 +58,7 @@ services:
     build: ../services/ingestion
     environment:
       - QDRANT_URL=http://qdrant:6333
-      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
       - KESO_DOCS_ROOT=/data
     volumes:
@@ -132,17 +133,6 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports: ["11434:11434"]
-    networks: [keso]
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:24.0
-    command: ["start-dev", "--import-realm"]
-    environment:
-      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
-      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
-    volumes:
-      - ./keycloak:/opt/keycloak/data/import:ro
-    ports: ["8081:8080"]
     networks: [keso]
 
   opa:

@@ -50,7 +50,14 @@ async def chat(
         }
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            # connect/write stay bounded so a genuinely-down orchestrator fails
+            # fast; read is unbounded because this proxies an SSE stream whose
+            # gaps track LLM generation latency (can run well past a flat 60s
+            # timeout on CPU inference) rather than network health -- matches
+            # the orchestrator's own httpx.AsyncClient(timeout=None) call to
+            # Ollama in app/pipeline/generation.py.
+            timeout = httpx.Timeout(connect=10.0, write=10.0, pool=10.0, read=None)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream(
                     "POST", f"{settings.orchestrator_url}/query", json=payload
                 ) as orchestrator_response:

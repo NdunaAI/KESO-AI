@@ -136,18 +136,55 @@ async def list_tools():
 
 @app.post("/tools/get_project/call")
 async def get_project(req: ToolCallRequest):
-    project_id = req.args["project_id"]
-    allowed = _scope_list(req.context, "projects")
+    """Queries the real KESO.PROJECTS / KESO.COMMUNITIES tables (see
+    docs/05-mcp-connectors.md #5.1 change note). `project_id` is matched as
+    a case-insensitive substring against both the project's human-readable
+    PROJECT_NO and NAME, since callers (the orchestrator's entity
+    extraction, or a human) address projects by name/code, never by the
+    underlying numeric surrogate key.
 
-    params: dict = {"project_id": project_id}
-    query = "SELECT * FROM projects WHERE project_id = :project_id"
-    if allowed is not None:
-        query += " AND " + _in_clause("project_id", allowed, params, "proj_")
+    Row-level scoping: this schema has no settlement_id column -- a
+    project belongs to a COMMUNITY_ID, and COMMUNITIES.COMMUNITY_NO is the
+    real-world short code closest to what docs/07-security-auth.md's
+    `scope.settlements` represents, so that's what's filtered on here.
+    """
+    project_query = req.args.get("project_id") or req.args.get("query")
+    allowed_communities = _scope_list(req.context, "settlements")
 
-    row = await _fetch_one(query, params)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Project not found or not in scope")
-    return {"result": row, "provenance": _provenance(f"projects/{project_id}")}
+    clauses, params = ["p.is_deleted = 'N'"], {}
+    if project_query:
+        params["project_query"] = f"%{project_query}%"
+        clauses.append("(UPPER(p.project_no) LIKE UPPER(:project_query) OR UPPER(p.name) LIKE UPPER(:project_query))")
+    if allowed_communities is not None:
+        clauses.append(_in_clause("c.community_no", allowed_communities, params, "allowed_community_"))
+
+    query = f"""
+        SELECT p.project_no, p.name,
+               -- KESO.PROJECTS.status stores single-letter codes; decoded
+               -- against KESO.LIST_OF_VALUES (lov='PROJECT_STATUSES') --
+               -- P=Pending, S=Started, C=Completed as of this writing.
+               -- 'N' is NOT one of the defined codes (most rows carry it
+               -- anyway -- likely legacy/unmigrated data) so it passes
+               -- through labelled as unrecognized rather than guessed at;
+               -- never invent a meaning for a code outside this mapping.
+               CASE p.status
+                   WHEN 'P' THEN 'Pending'
+                   WHEN 'S' THEN 'Started'
+                   WHEN 'C' THEN 'Completed'
+                   ELSE p.status || ' (status code not in the standard PROJECT_STATUSES list)'
+               END AS status,
+               p.planned_start_on, p.planned_end_on, p.start_on, p.end_on,
+               c.community_no, c.name AS community_name
+        FROM KESO.PROJECTS p
+        JOIN KESO.COMMUNITIES c ON c.community_id = p.community_id
+        WHERE {' AND '.join(clauses)}
+        ORDER BY p.name
+        FETCH FIRST 20 ROWS ONLY
+    """
+    rows = await _fetch_all(query, params)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No matching project found or not in scope")
+    return {"result": rows, "provenance": _provenance("KESO.PROJECTS")}
 
 
 @app.post("/tools/list_projects/call")
@@ -177,30 +214,48 @@ async def list_projects(req: ToolCallRequest):
 
 @app.post("/tools/get_milestone_status/call")
 async def get_milestone_status(req: ToolCallRequest):
-    project_id = req.args.get("project_id")
-    settlement_id = req.args.get("settlement_id")
-    milestone_number = req.args.get("milestone_number")
-    allowed_settlements = _scope_list(req.context, "settlements")
+    """Queries the real KESO.MILESTONES / KESO.PROJECTS / KESO.COMMUNITIES
+    tables -- see get_project's docstring above for the schema notes this
+    shares (docs/05-mcp-connectors.md #5.1 change note). As of this
+    writing KESO.MILESTONES has zero rows in the live database, so an
+    empty result here reflects real state, not a bug.
 
-    if not project_id and not settlement_id:
-        raise HTTPException(status_code=400, detail="project_id or settlement_id is required")
+    No hard requirement on project_id/settlement_id being present (unlike
+    the placeholder-schema version this replaced): the orchestrator's
+    keyword-based entity extraction (query_understanding.py) often has
+    nothing to extract for a perfectly valid status_lookup question like
+    "what's the status of my projects?", and failing the call outright in
+    that case (as the old 400 here did) silently drops this tool's result
+    from the LLM's context instead of truthfully reporting "no milestones
+    recorded yet".
+    """
+    project_query = req.args.get("project_id") or req.args.get("query")
+    milestone_query = req.args.get("milestone_number")
+    allowed_communities = _scope_list(req.context, "settlements")
 
-    clauses, params = [], {}
-    if project_id:
-        params["project_id"] = project_id
-        clauses.append("project_id = :project_id")
-    if settlement_id:
-        params["settlement_id"] = settlement_id
-        clauses.append("settlement_id = :settlement_id")
-    if milestone_number is not None:
-        params["milestone_number"] = milestone_number
-        clauses.append("milestone_number = :milestone_number")
-    if allowed_settlements is not None:
-        clauses.append(_in_clause("settlement_id", allowed_settlements, params, "allowed_settlement_"))
+    clauses, params = ["p.is_deleted = 'N'", "m.is_deleted = 'N'"], {}
+    if project_query:
+        params["project_query"] = f"%{project_query}%"
+        clauses.append("(UPPER(p.project_no) LIKE UPPER(:project_query) OR UPPER(p.name) LIKE UPPER(:project_query))")
+    if milestone_query is not None:
+        params["milestone_query"] = f"%{milestone_query}%"
+        clauses.append("UPPER(m.name) LIKE UPPER(:milestone_query)")
+    if allowed_communities is not None:
+        clauses.append(_in_clause("c.community_no", allowed_communities, params, "allowed_community_"))
 
-    query = f"SELECT * FROM milestones WHERE {' AND '.join(clauses)} ORDER BY milestone_number"
+    query = f"""
+        SELECT m.name AS milestone_name, m.status, m.start_on, m.end_on, m.completed_on,
+               p.project_no, p.name AS project_name,
+               c.community_no, c.name AS community_name
+        FROM KESO.MILESTONES m
+        JOIN KESO.PROJECTS p ON p.project_id = m.project_id
+        JOIN KESO.COMMUNITIES c ON c.community_id = p.community_id
+        WHERE {' AND '.join(clauses)}
+        ORDER BY p.name, m.name
+        FETCH FIRST 20 ROWS ONLY
+    """
     rows = await _fetch_all(query, params)
-    return {"result": rows, "provenance": _provenance("milestones")}
+    return {"result": rows, "provenance": _provenance("KESO.MILESTONES")}
 
 
 @app.post("/tools/get_claims/call")

@@ -1,15 +1,104 @@
 /**
- * Thin client for the API Gateway's streaming chat endpoint.
- * See docs/03-api-specification.md #3.2 for the event contract.
+ * Thin client for the API Gateway. See docs/03-api-specification.md.
  *
- * TODO: replace DEV_BEARER_TOKEN with a real Keycloak OIDC session (docs
- * #3.4) once next-auth/Keycloak wiring is added -- this scaffold only
- * covers the chat request/stream plumbing.
+ * TODO: replace the dev token seed with a real login flow against
+ * POST /auth/login (docs #3.4) once a login form is added -- everything
+ * below already expects a bearer token and refreshes it via POST
+ * /auth/refresh, so wiring a real login only means replacing how the
+ * *first* token pair is obtained.
  */
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
-const DEV_BEARER_TOKEN = process.env.NEXT_PUBLIC_DEV_BEARER_TOKEN ?? "";
+
+const STORAGE_KEY = "keso_dev_tokens";
+
+interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
+function loadStoredTokens(): TokenPair | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as TokenPair) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeTokens(tokens: TokenPair): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
+  } catch {
+    // localStorage unavailable (private mode, quota) -- refresh still works
+    // in-memory for the rest of this page load, just doesn't survive reload.
+  }
+}
+
+// Access tokens are short-lived (15 min default -- docs/07-security-auth.md
+// #7.6), so a token baked in at build time goes stale during a normal
+// testing session. Seed from localStorage first (a prior refresh in this
+// browser), falling back to the build-time dev token.
+const stored = loadStoredTokens();
+let currentAccessToken = stored?.accessToken ?? process.env.NEXT_PUBLIC_DEV_BEARER_TOKEN ?? "";
+let currentRefreshToken = stored?.refreshToken ?? process.env.NEXT_PUBLIC_DEV_REFRESH_TOKEN ?? "";
+
+function decodeJwtExpMs(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as { exp?: number };
+    return typeof json.exp === "number" ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (!currentRefreshToken) return false;
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    try {
+      const resp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: currentRefreshToken }),
+      });
+      if (!resp.ok) return false;
+      const body = (await resp.json()) as { access_token: string; refresh_token: string };
+      currentAccessToken = body.access_token;
+      currentRefreshToken = body.refresh_token;
+      storeTokens({ accessToken: currentAccessToken, refreshToken: currentRefreshToken });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
+}
+
+/** Called before every API call so a soon-to-expire access token is
+ * rotated ahead of time rather than failing the request it's used on. */
+async function ensureValidAccessToken(): Promise<void> {
+  const expMs = decodeJwtExpMs(currentAccessToken);
+  const expiringSoon = expMs !== null && expMs - Date.now() < 30_000;
+  if (expiringSoon) {
+    await refreshAccessToken();
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  return { Authorization: `Bearer ${currentAccessToken}` };
+}
 
 export interface Citation {
   id: string;
@@ -44,14 +133,22 @@ export async function streamChat(
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
+  await ensureValidAccessToken();
   await fetchEventSource(`${API_BASE_URL}/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${DEV_BEARER_TOKEN}`,
+      ...authHeaders(),
     },
     body: JSON.stringify({ conversation_id: conversationId, message, filters }),
     signal,
+    // Without this, fetch-event-source closes the connection and opens a
+    // brand-new POST /chat when the tab is backgrounded -- easy to trigger
+    // here since LLM generation can run for minutes (docs/06-rag-pipeline.md
+    // #6.2). Both requests then write into the same "last assistant
+    // message" slot (see page.tsx's updateLastAssistant), interleaving two
+    // independent answers/citation sets into one garbled bubble.
+    openWhenHidden: true,
     onmessage(ev) {
       const data = ev.data ? JSON.parse(ev.data) : {};
       switch (ev.event) {
@@ -80,4 +177,53 @@ export async function streamChat(
       throw err; // stop fetch-event-source's built-in retry; caller decides what's next
     },
   });
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  display_name: string;
+  roles: string[];
+  scope: { projects: string[]; settlements: string[] };
+}
+
+export async function fetchMe(): Promise<UserProfile | null> {
+  if (!currentAccessToken) return null;
+  await ensureValidAccessToken();
+  const resp = await fetch(`${API_BASE_URL}/auth/me`, { headers: authHeaders() });
+  if (!resp.ok) return null;
+  return (await resp.json()) as UserProfile;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export async function fetchConversations(): Promise<ConversationSummary[]> {
+  if (!currentAccessToken) return [];
+  await ensureValidAccessToken();
+  const resp = await fetch(`${API_BASE_URL}/conversations`, { headers: authHeaders() });
+  if (!resp.ok) return [];
+  const body = (await resp.json()) as { items: ConversationSummary[] };
+  return body.items;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  citations: Citation[];
+  created_at: string;
+}
+
+export async function fetchConversation(id: string): Promise<ConversationMessage[] | null> {
+  if (!currentAccessToken) return null;
+  await ensureValidAccessToken();
+  const resp = await fetch(`${API_BASE_URL}/conversations/${id}`, { headers: authHeaders() });
+  if (!resp.ok) return null;
+  const body = (await resp.json()) as { messages: ConversationMessage[] };
+  return body.messages;
 }

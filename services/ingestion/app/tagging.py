@@ -5,7 +5,12 @@ conventions as a PoC-simple stand-in for the SharePoint-library-metadata and
 Operational-DB-lookup approach described in the docs. Expected layout:
 
     <root>/<doc_type>/<settlement_id>/<file>
-    e.g. sample-docs/progress_report/SettlementA/Q2-2026.pdf
+    e.g. sample-docs/progress_report/A/Q2-2026.pdf
+
+<settlement_id> is used verbatim as the payload's settlement_id (and thus
+in Qdrant permission filters, docs/04-data-model.md #4.3), so it must be
+the bare settlement code used everywhere else in the system -- "A", not a
+folder-friendly label like "SettlementA".
 
 Documents that don't match this convention still get ingested, tagged only
 with doc_type="unclassified" -- unresolved documents are the manual-review

@@ -20,10 +20,21 @@ from app.pipeline.schemas import Subject
 
 log = structlog.get_logger()
 
-# Falls back to the repo-relative copy when the Docker volume mount path
-# (settings.mcp_registry) isn't present, e.g. running the orchestrator
-# directly per docs/11-dev-setup.md #11.2 instead of via Compose.
-_FALLBACK_REGISTRY_PATH = Path(__file__).resolve().parents[3] / "shared" / "schemas" / "mcp-registry.yaml"
+def _local_fallback_registry_path() -> Path | None:
+    """Repo-relative copy used when the Docker volume mount path
+    (settings.mcp_registry) isn't present, e.g. running the orchestrator
+    directly per docs/11-dev-setup.md #11.2 instead of via Compose.
+
+    Computed lazily (not as a module-level constant) because the parent
+    chain this relies on (app/mcp_client.py -> orchestrator -> services ->
+    repo root) only exists in a local checkout -- inside the Docker image
+    only app/ is copied in, so there is no such ancestor and indexing
+    parents[3] would raise IndexError at import time even when the
+    (volume-mounted) primary path is present and this fallback is never
+    actually used.
+    """
+    parents = Path(__file__).resolve().parents
+    return parents[3] / "shared" / "schemas" / "mcp-registry.yaml" if len(parents) > 3 else None
 
 
 class MCPRegistry:
@@ -49,8 +60,17 @@ _registry: MCPRegistry | None = None
 def get_registry() -> MCPRegistry:
     global _registry
     if _registry is None:
-        path = settings.mcp_registry if Path(settings.mcp_registry).exists() else str(_FALLBACK_REGISTRY_PATH)
-        _registry = MCPRegistry(path)
+        primary = Path(settings.mcp_registry)
+        if primary.exists():
+            path: Path | None = primary
+        else:
+            path = _local_fallback_registry_path()
+        if path is None:
+            raise FileNotFoundError(
+                f"MCP registry not found at {primary} and no local fallback is available "
+                "(not running from a repo checkout)"
+            )
+        _registry = MCPRegistry(str(path))
     return _registry
 
 

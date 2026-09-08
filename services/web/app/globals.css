@@ -1,3 +1,23 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+a {
+  color: theme("colors.keso.indigo");
+  text-decoration: none;
+}
+a:hover {
+  color: theme("colors.keso.orange");
+  text-decoration: underline;
+}
+
+.keso-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.keso-scroll::-webkit-scrollbar-thumb {
+  background: theme("colors.keso.border");
+  border-radius: 8px;
+}
+.keso-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

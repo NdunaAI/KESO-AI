@@ -33,7 +33,6 @@ flowchart TB
         Ollama[[Ollama]]
     end
     subgraph IdentityStack
-        KC[Keycloak]
         OPA[OPA]
     end
     subgraph Obs
@@ -44,7 +43,6 @@ flowchart TB
 
     Proxy --> Web
     Proxy --> Gateway
-    Gateway --> KC
     Gateway --> OPA
     Gateway --> Orchestrator
     Orchestrator --> QD
@@ -76,17 +74,16 @@ services:
     build: ./services/web
     environment:
       - NEXT_PUBLIC_API_BASE_URL=https://keso-ai.local/api/v1
-      - KEYCLOAK_ISSUER=https://keso-ai.local/auth/realms/keso
     depends_on: [api-gateway]
 
   api-gateway:
     build: ./services/api-gateway
     environment:
-      - DATABASE_URL=postgresql://keso:${POSTGRES_PASSWORD}@postgres:5432/keso
-      - KEYCLOAK_JWKS_URL=http://keycloak:8080/realms/keso/protocol/openid-connect/certs
+      - DATABASE_URL=postgresql+asyncpg://keso:${POSTGRES_PASSWORD}@postgres:5432/keso
+      - JWT_SECRET=${JWT_SECRET}
       - OPA_URL=http://opa:8181
       - ORCHESTRATOR_URL=http://orchestrator:8200
-    depends_on: [postgres, keycloak, opa, orchestrator]
+    depends_on: [postgres, opa, orchestrator]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
 
@@ -150,14 +147,6 @@ services:
     volumes: ["ollama_data:/root/.ollama"]
     # GPU pass-through optional via deploy.resources.reservations.devices
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:24.0
-    command: ["start", "--import-realm"]
-    environment:
-      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
-      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
-    volumes: ["./infra/keycloak:/opt/keycloak/data/import"]
-
   opa:
     image: openpolicyagent/opa:0.63.0
     command: ["run", "--server", "/policies"]
@@ -190,18 +179,19 @@ volumes:
 | `ORACLE_WALLET_LOCATION` | optional; only needed for Oracle Autonomous DB / mTLS wallet-based connections |
 | `KESO_DOCS_ROOT` | host path mounted read-only into `mcp-filesystem` |
 | `SHAREPOINT_TENANT_ID` / `SHAREPOINT_CLIENT_ID` / `SHAREPOINT_CLIENT_SECRET` | Entra ID app registration for `mcp-sharepoint` |
-| `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` | bootstrap admin (rotate/disable after realm import) |
+| `JWT_SECRET` | signs/verifies every access token the API Gateway issues (docs/07-security-auth.md #7.1) — long random value, unique per environment, rotating it invalidates all outstanding access tokens |
 | `LLM_MODEL` | Ollama model tag |
 | `EMBEDDING_MODEL` | embedding model tag |
 
 ## 9.5 Startup sequence & healthchecks
 
-1. `docker compose up -d postgres qdrant ollama keycloak opa` — bring up stateful/identity services first.
+1. `docker compose up -d postgres qdrant ollama opa` — bring up stateful/policy services first.
 2. `docker compose exec ollama ollama pull llama3.1:8b-instruct && ollama pull nomic-embed-text` — pull models on first run (or bake into a custom Ollama image for reproducible startup).
 3. `docker compose up -d oracledb-mcp-server mcp-filesystem mcp-sharepoint mcp-fetch mcp-sqlite` — connectors.
-4. `docker compose up -d orchestrator api-gateway web proxy` — app tier.
-5. Run initial ingestion: `docker compose run --rm ingestion python -m ingestion.run_full_index`.
-6. Verify: `GET https://keso-ai.local/api/v1/health/dependencies` returns all-green.
+4. `docker compose up -d orchestrator api-gateway web proxy` — app tier. The API Gateway creates its own tables (`users`, `user_scope`, `refresh_tokens`, ...) on startup if they don't exist yet — see [04-data-model.md](04-data-model.md) #4.1.
+5. Provision at least one login: `docker compose exec api-gateway python -m app.manage create-user --email pm@keso.org --password '...' --display-name "..." --role project_manager --settlement A` (see [07-security-auth.md](07-security-auth.md) #7.1).
+6. Run initial ingestion: `docker compose run --rm ingestion python -m ingestion.run_full_index`.
+7. Verify: `GET https://keso-ai.local/api/v1/health/dependencies` returns all-green, and `POST /api/v1/auth/login` with the provisioned account returns a token pair.
 
 Single-command startup for subsequent runs: `docker compose up -d` (Compose respects `depends_on`/healthchecks for ordering).
 

@@ -55,5 +55,5 @@ The `audit_log` table (schema in [04-data-model.md](04-data-model.md) §4.1) is 
 ## 10.6 Health & readiness
 
 - `/health` (liveness) — process is up.
-- `/ready` (readiness) — dependencies (DB, Qdrant, Ollama, MCP servers, Keycloak, OPA) are reachable; used by Compose healthchecks and load balancer readiness gating.
+- `/ready` (readiness) — dependencies (DB, Qdrant, Ollama, MCP servers, OPA) are reachable; used by Compose healthchecks and load balancer readiness gating.
 - `/health/dependencies` (admin) — per-dependency status detail, surfaced on the ops dashboard, used during the deployment runbook in [09-deployment.md](09-deployment.md) §9.5.
