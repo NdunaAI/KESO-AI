@@ -2,7 +2,8 @@
 
 Runs against an in-memory SQLite database instead of Postgres -- the ORM
 models in app/db_models.py are deliberately cross-dialect (Uuid, JSON) so
-this works without a running Postgres instance.
+this works without a running Postgres instance. Shared engine/schema/
+dependency-override setup lives in conftest.py.
 """
 
 from __future__ import annotations
@@ -11,37 +12,19 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
-from app.db import Base, get_db
 from app.db_models import User, UserScope
 from app.main import app
 from app.security import hash_password
+from tests.conftest import TestSessionLocal, ensure_schema
 
 TEST_PASSWORD = "correct horse battery staple"
 
-test_engine = create_async_engine(
-    "sqlite+aiosqlite:///:memory:",
-    poolclass=StaticPool,
-    connect_args={"check_same_thread": False},
-)
-TestSessionLocal = async_sessionmaker(test_engine, expire_on_commit=False)
-
-
-async def _override_get_db():
-    async with TestSessionLocal() as session:
-        yield session
-
-
-app.dependency_overrides[get_db] = _override_get_db
-
 
 @pytest.fixture(scope="module", autouse=True)
-def _schema_and_seed_user():
+def _seed_user():
     async def _setup() -> None:
-        async with test_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        await ensure_schema()
         async with TestSessionLocal() as db:
             user = User(
                 email="pm@keso.org",

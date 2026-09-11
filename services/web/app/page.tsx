@@ -6,6 +6,8 @@ import {
   fetchMe,
   fetchConversations,
   fetchConversation,
+  logout,
+  isAuthenticated,
   type ChatFilters,
   type ConversationSummary,
   type UserProfile,
@@ -15,8 +17,10 @@ import { Sidebar } from "@/components/Sidebar";
 import { FilterBar } from "@/components/FilterBar";
 import { ChatMessage, type DisplayMessage } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
+import { LoginForm } from "@/components/LoginForm";
 
 export default function ChatPage() {
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -27,13 +31,34 @@ export default function ChatPage() {
   const threadEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchMe().then(setProfile);
-    fetchConversations().then(setConversations);
+    if (!isAuthenticated()) {
+      setIsCheckingSession(false);
+      return;
+    }
+    fetchMe()
+      .then((p) => {
+        setProfile(p);
+        if (p) fetchConversations().then(setConversations);
+      })
+      .finally(() => setIsCheckingSession(false));
   }, []);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function handleLoginSuccess(loggedInProfile: UserProfile) {
+    setProfile(loggedInProfile);
+    fetchConversations().then(setConversations);
+  }
+
+  async function handleLogout() {
+    await logout();
+    setProfile(null);
+    setConversations([]);
+    setConversationId(null);
+    setMessages([]);
+  }
 
   async function handleSelectConversation(id: string) {
     setConversationId(id);
@@ -96,10 +121,18 @@ export default function ChatPage() {
     }
   }
 
+  if (isCheckingSession) {
+    return <div className="h-screen bg-keso-page" />;
+  }
+
+  if (!profile) {
+    return <LoginForm onSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <div className="h-[3px] shrink-0 bg-gradient-to-r from-keso-orange via-keso-indigo to-keso-green" />
-      <Header profile={profile} />
+      <Header profile={profile} onLogout={handleLogout} />
 
       <div className="flex min-h-0 flex-1">
         <Sidebar

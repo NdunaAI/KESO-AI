@@ -1,7 +1,7 @@
 import Image from "next/image";
 import type { UserProfile } from "@/lib/api";
 import { formatRoleLabel, initialsFromName } from "@/lib/format";
-import { UserIcon } from "@/components/icons";
+import { LogOutIcon, UserIcon } from "@/components/icons";
 
 function scopeSummary(scope: UserProfile["scope"]): string {
   if (scope.settlements.includes("*")) return "All settlements";
@@ -11,7 +11,7 @@ function scopeSummary(scope: UserProfile["scope"]): string {
   return "No scope restrictions";
 }
 
-export function Header({ profile }: { profile: UserProfile | null }) {
+export function Header({ profile, onLogout }: { profile: UserProfile | null; onLogout: () => void }) {
   return (
     <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-keso-border bg-white px-8">
       <div className="flex items-center gap-4">
@@ -36,6 +36,14 @@ export function Header({ profile }: { profile: UserProfile | null }) {
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-keso-orange to-keso-indigo text-[13px] font-bold text-white">
               {initialsFromName(profile.display_name)}
             </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              title="Log out"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-keso-ink-faint transition-colors hover:bg-keso-surface hover:text-keso-ink"
+            >
+              <LogOutIcon />
+            </button>
           </>
         ) : (
           <div className="rounded-chip bg-keso-surface px-3 py-1 text-xs font-medium text-keso-ink-faint">

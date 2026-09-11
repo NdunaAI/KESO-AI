@@ -97,3 +97,31 @@ export function ShieldCheckIcon({ className, size = 14 }: IconProps) {
     </svg>
   );
 }
+
+export function LockIcon({ className, size = 15 }: IconProps) {
+  return (
+    <svg width={size} height={size} className={className} stroke="currentColor" {...base}>
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+export function MailIcon({ className, size = 15 }: IconProps) {
+  return (
+    <svg width={size} height={size} className={className} stroke="currentColor" {...base}>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="m22 6-10 7L2 6" />
+    </svg>
+  );
+}
+
+export function LogOutIcon({ className, size = 14 }: IconProps) {
+  return (
+    <svg width={size} height={size} className={className} stroke="currentColor" {...base}>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}

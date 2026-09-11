@@ -1,17 +1,9 @@
-/**
- * Thin client for the API Gateway. See docs/03-api-specification.md.
- *
- * TODO: replace the dev token seed with a real login flow against
- * POST /auth/login (docs #3.4) once a login form is added -- everything
- * below already expects a bearer token and refreshes it via POST
- * /auth/refresh, so wiring a real login only means replacing how the
- * *first* token pair is obtained.
- */
+/** Thin client for the API Gateway. See docs/03-api-specification.md. */
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
-const STORAGE_KEY = "keso_dev_tokens";
+const STORAGE_KEY = "keso_auth_tokens";
 
 interface TokenPair {
   accessToken: string;
@@ -38,13 +30,21 @@ function storeTokens(tokens: TokenPair): void {
   }
 }
 
-// Access tokens are short-lived (15 min default -- docs/07-security-auth.md
-// #7.6), so a token baked in at build time goes stale during a normal
-// testing session. Seed from localStorage first (a prior refresh in this
-// browser), falling back to the build-time dev token.
+function clearStoredTokens(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+// A session set by login() survives page reloads via localStorage; without
+// one, both start empty and every call below resolves to "not signed in"
+// until login() is called.
 const stored = loadStoredTokens();
-let currentAccessToken = stored?.accessToken ?? process.env.NEXT_PUBLIC_DEV_BEARER_TOKEN ?? "";
-let currentRefreshToken = stored?.refreshToken ?? process.env.NEXT_PUBLIC_DEV_REFRESH_TOKEN ?? "";
+let currentAccessToken = stored?.accessToken ?? "";
+let currentRefreshToken = stored?.refreshToken ?? "";
 
 function decodeJwtExpMs(token: string): number | null {
   try {
@@ -98,6 +98,55 @@ async function ensureValidAccessToken(): Promise<void> {
 
 function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${currentAccessToken}` };
+}
+
+export function isAuthenticated(): boolean {
+  return currentAccessToken !== "";
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  display_name: string;
+  roles: string[];
+  scope: { projects: string[]; settlements: string[] };
+}
+
+export async function login(email: string, password: string): Promise<UserProfile> {
+  const resp = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!resp.ok) {
+    const detail = (await resp.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(detail?.detail ?? "Invalid email or password");
+  }
+  const body = (await resp.json()) as { access_token: string; refresh_token: string };
+  currentAccessToken = body.access_token;
+  currentRefreshToken = body.refresh_token;
+  storeTokens({ accessToken: currentAccessToken, refreshToken: currentRefreshToken });
+
+  const profile = await fetchMe();
+  if (!profile) throw new Error("Logged in, but could not load your profile.");
+  return profile;
+}
+
+export async function logout(): Promise<void> {
+  if (currentRefreshToken) {
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: currentRefreshToken }),
+      });
+    } catch {
+      // best-effort revoke; local state is cleared below regardless
+    }
+  }
+  currentAccessToken = "";
+  currentRefreshToken = "";
+  clearStoredTokens();
 }
 
 export interface Citation {
@@ -177,14 +226,6 @@ export async function streamChat(
       throw err; // stop fetch-event-source's built-in retry; caller decides what's next
     },
   });
-}
-
-export interface UserProfile {
-  id: string;
-  email: string;
-  display_name: string;
-  roles: string[];
-  scope: { projects: string[]; settlements: string[] };
 }
 
 export async function fetchMe(): Promise<UserProfile | null> {
