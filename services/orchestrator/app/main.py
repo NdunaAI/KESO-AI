@@ -43,7 +43,7 @@ async def query(request: Request):
     async def stream():
         try:
             # Stage 1
-            understanding = query_understanding.understand(question)
+            understanding = await query_understanding.understand(question)
 
             # Stage 2
             tool_results = await mcp_fetch.fetch_context(understanding, subject)
